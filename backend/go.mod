@@ -1,4 +1,4 @@
-module github.com/Revachol/prep_hackaton
+module backend
 
 go 1.25
 

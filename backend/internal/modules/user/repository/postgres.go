@@ -1,10 +1,10 @@
-package db
+package repository
 
 import (
 	"context"
 	"time"
 
-	"github.com/Revachol/prep_hackaton/backend/internal/modules/user/entity"
+	"backend/internal/modules/user/entity"
 	"github.com/jmoiron/sqlx"
 )
 

@@ -3,100 +3,114 @@ package usecase
 import (
 	"context"
 	"errors"
-	"net/http"
-	"time"
 
-	"github.com/gin-gonic/gin"
+	"backend/internal/auth"
+	"backend/internal/modules/user/entity"
+	"backend/internal/modules/user/repository"
 	"golang.org/x/crypto/bcrypt"
-
-	"your_project/internal/auth"
-	"your_project/internal/domain"
-	"your_project/internal/user/repository"
 )
 
-func HashPassword(password string) (string, error) {
-	bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	return string(bytes), err
+type UserService struct {
+	repo        repository.UserRepository
+	authManager auth.AuthManager
 }
 
-func CheckPasswordHash(password, hash string) bool {
-	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
-	return err == nil
+// NewUserService — конструктор
+func NewUserService(repo repository.UserRepository, authManager auth.AuthManager) *UserService {
+	return &UserService{
+		repo:        repo,
+		authManager: authManager,
+	}
 }
 
 // ===================== Register =====================
-func (h *UserHandler) Register(c *gin.Context) {
-	var req struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
-		return
+func (s *UserService) Register(ctx context.Context, email, password string) (string, error) {
+	// Проверяем, есть ли пользователь
+	_, err := s.repo.GetByEmail(ctx, email)
+	if err == nil {
+		return "", errors.New("user already exists")
 	}
 
-	token, err := h.userService.Register(c.Request.Context(), req.Email, req.Password)
+	// Хэшируем пароль
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+		return "", err
 	}
 
-	c.JSON(http.StatusOK, gin.H{"token": token})
+	user := &entity.User{
+		Email:        email,
+		PasswordHash: string(hash),
+		TokenVersion: 1,
+	}
+
+	if err := s.repo.CreateUser(ctx, user); err != nil {
+		return "", err
+	}
+
+	// Генерируем JWT
+	token, err := s.authManager.GenerateToken(user.ID)
+	if err != nil {
+		return "", err
+	}
+
+	return token, nil
 }
 
 // ===================== Login =====================
-func (h *UserHandler) Login(c *gin.Context) {
-	var req struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
-		return
-	}
-
-	token, err := h.userService.Login(c.Request.Context(), req.Email, req.Password)
+func (s *UserService) Login(ctx context.Context, email, password string) (string, error) {
+	user, err := s.repo.GetByEmail(ctx, email)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
-		return
+		return "", errors.New("invalid email or password")
 	}
 
-	c.JSON(http.StatusOK, gin.H{"token": token})
+	// Проверяем пароль
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+		return "", errors.New("invalid email or password")
+	}
+
+	// Генерируем JWT
+	token, err := s.authManager.GenerateToken(user.ID)
+	if err != nil {
+		return "", err
+	}
+
+	return token, nil
 }
 
 // ===================== Logout =====================
-func (h *UserHandler) Logout(c *gin.Context) {
-	userID, exists := auth.UserIDFromContext(c.Request.Context())
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-		return
-	}
-
-	err := h.userService.Logout(c.Request.Context(), userID)
+func (s *UserService) Logout(ctx context.Context, userID int64) error {
+	// Получаем пользователя
+	user, err := s.repo.GetByID(ctx, userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+		return err
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "logged out"})
+	// Инвалидируем токены — увеличиваем token_version
+	newVersion := user.TokenVersion + 1
+	if err := s.repo.UpdateTokenVersion(ctx, userID, newVersion); err != nil {
+		return err
+	}
+
+	// Также можно очистить Redis (если используем кэш версий)
+	if s.authManager.Invalidate != nil {
+		if err := s.authManager.Invalidate(userID); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // ===================== Me =====================
-func (h *UserHandler) Me(c *gin.Context) {
-	userID, exists := auth.UserIDFromContext(c.Request.Context())
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-		return
-	}
-
-	user, err := h.userService.Me(c.Request.Context(), userID)
+func (s *UserService) Me(ctx context.Context, userID int64) (*entity.User, error) {
+	user, err := s.repo.GetByID(ctx, userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+		return nil, err
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"id":    user.ID,
-		"email": user.Email,
-	})
+	// Не возвращаем пароль и token_version
+	return &entity.User{
+		ID:    user.ID,
+		Email: user.Email,
+	}, nil
 }
