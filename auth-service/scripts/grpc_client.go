@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"auth-service/gen/proto"
+	"auth-service/gen"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )

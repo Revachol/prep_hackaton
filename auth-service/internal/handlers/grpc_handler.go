@@ -4,7 +4,7 @@ import (
 	"context"
 	"log"
 
-	"auth-service/gen/proto"
+	"auth-service/gen"
 	"auth-service/internal/models"
 )
 

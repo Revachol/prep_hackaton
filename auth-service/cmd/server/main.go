@@ -8,7 +8,7 @@ import (
 	"syscall"
 
 	"auth-service/config"
-	"auth-service/gen/proto"
+	"auth-service/gen"
 	"auth-service/internal/handlers"
 	"auth-service/internal/middleware"
 	"auth-service/internal/repository"
